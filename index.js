@@ -4,8 +4,11 @@ const port = process.env.PORT || 5000;
 const cors = require('cors')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require('jsonwebtoken');
-
 require('dotenv').config()
+
+const stripe = require("stripe")(process.env.STRIPE_PRIVATE_KEY)
+// console.log(stripe)
+// console.log(process.env.STRIPE_PRIVATE_KEY)
 // middlewire
 app.use(cors())
 app.use(express.json())
@@ -39,6 +42,7 @@ async function run() {
         const bookingsDB = client.db("DoctorsPortal").collection("bookings")
         const usersDB = client.db("DoctorsPortal").collection("usersDB")
         const doctorsDB = client.db("DoctorsPortal").collection("doctorsDB")
+        const paymetsCollection = client.db("DoctorsPortal").collection("payments")
 
         const verifyAdmin = async(req , res , next) => {
             const decodedEmail = req.decoded.email;
@@ -88,7 +92,44 @@ async function run() {
             res.send(result)
         })
         // bookins and myAppoinments are same route 
+        
 
+        app.post('/create-payment-intent' , async(req , res) => {
+            console.log(req.body.price)
+            const booking = req.body;
+            const price = booking.price;
+            // const price = req.body;
+            const amount = price*100
+
+            const paymentIntent = await stripe.paymentIntents.create({
+                currency : 'usd' , 
+                amount : amount , 
+                "payment_method_types" : [
+                    "card"
+                ] 
+                
+            })
+            res.send({
+                clientSecret : paymentIntent.client_secret 
+            })
+        })
+
+        app.post('/payments'  , async(req , res) => {
+            const payment = req.body;
+            const result = await paymetsCollection.insertOne(payment)
+
+            const id = payment.bookingId
+            const filter = {_id : ObjectId(id)}
+            const updateDoc = {
+                $set : {
+                    paid : true , 
+                    transactionId : payment.transactionId
+                }
+            }
+
+            const updateBookingsDb = await bookingsDB.updateOne(filter,updateDoc) 
+            res.send(result)
+        })
         app.get('/myAppoinmets' , VerifyJWT ,async (req , res)  => {
             const email = req.query.email;
             const decodedMail = req.decoded.email;
@@ -149,18 +190,12 @@ async function run() {
             res.send(result)
         })
         
-        app.get('/addPrice' ,async(req , res ) => {
-            const filter = {}
-            const options = {upsert : true}
-            const updatedDoc = {
-                $set : {
-                    price : 99
-                }
-            }
-            const result = await appoinmets.insertMany(filter, updatedDoc, options)
-            // const result = 'hello'
-            res.send(result)
-        })
+        
+
+
+
+       
+        
         app.get('/users/admin/:email' , async (req , res) => {
             const email = req.params.email;
             const query = {email};
@@ -172,16 +207,25 @@ async function run() {
             const doctors = await doctorsDB.find(query).toArray()
             res.send(doctors)
         })
-        app.post('/doctors' ,VerifyJWT ,verifyAdmin , async (req , res) => {
+        app.post('/doctors' ,verifyAdmin , async (req , res) => {
             const doctorInfo = req.body;
             const result =await doctorsDB.insertOne(doctorInfo)
             res.send(result)
         })
-        app.delete('/doctors/:id' ,VerifyJWT,verifyAdmin , async (req ,res ) => {
+        app.delete('/doctors/:id' ,verifyAdmin , async (req ,res ) => {
             const userId = req.params.id ;
             const query = {_id: ObjectId(userId)}
             const result =await doctorsDB.deleteOne(query)
             res.send(result)
+        })
+
+
+        app.get('/bookings/:id' , async ( req ,res ) => {
+            const id = req.params.id;
+            const query = {_id: ObjectId(id)}
+            const bookings = await bookingsDB.findOne(query)
+           
+            res.send(bookings) 
         })
     }
     catch {
